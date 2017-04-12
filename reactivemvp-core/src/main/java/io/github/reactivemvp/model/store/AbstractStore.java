@@ -15,9 +15,11 @@ import io.github.reactivemvp.model.StateChangedEventArgs;
 import io.github.reactivemvp.model.StateChangedListener;
 import io.github.reactivemvp.model.Store;
 import io.reactivex.Observable;
+import io.reactivex.ObservableSource;
 import io.reactivex.annotations.NonNull;
 import io.reactivex.disposables.Disposable;
 import io.reactivex.functions.Consumer;
+import io.reactivex.functions.Function;
 import io.reactivex.functions.Predicate;
 
 /**
@@ -25,19 +27,26 @@ import io.reactivex.functions.Predicate;
  */
 
 public abstract class AbstractStore<TState extends State> implements Store<TState> {
-    protected final Object mReduceSyncRoot = new Object();
-    protected final Object mMiddlewareSyncRoot = new Object();
+    private final Object mReduceSyncRoot = new Object();
+    private final Object mMiddlewareSyncRoot = new Object();
 
-    private final Relay<StateChangedEventArgs<TState>> mActionRelay = PublishRelay.create();
+    private final Relay<StateChangedEventArgs<TState>> mStateChangedRelay;
+    private final Observable<StateChangedEventArgs<TState>> mStateChangedObservable;
+
+    public AbstractStore() {
+        mStateChangedRelay = PublishRelay.create();
+        mStateChangedObservable = mStateChangedRelay.serialize();
+    }
 
     private final Consumer<Throwable> mOnError = new Consumer<Throwable>() {
         @Override
         public void accept(@NonNull Throwable throwable) throws Exception {
+            onStateChangedListenerError(throwable);
         }
     };
     private TState mState;
     private List<Reducer<TState>> mReducers = Collections.emptyList();
-    private List<Middleware<? extends Action>> mMiddlewareList = Collections.emptyList();
+    private List<Middleware> mMiddlewareList = Collections.emptyList();
 
     @Override
     public TState getState() {
@@ -45,82 +54,75 @@ public abstract class AbstractStore<TState extends State> implements Store<TStat
     }
 
     @Override
-    public <TAction extends Action> TAction dispatch(@NonNull final TAction action) {
-        if (executeMiddleware(action)) {
-            return action;
-        }
+    public final <TAction extends Action> TAction dispatch(@NonNull final TAction action) {
+        executeMiddleware(action);
+        executeReducers(action);
+        return action;
+    }
 
-        // 目前由于reducer做的事情比较简单，只是创建对象和修改对象状态，就在调用者线程执行了
+    private <TAction extends Action> void executeReducers(@NonNull TAction action) {
         final boolean shouldFireStateChangedEvent;
         final TState newState;
         synchronized (mReduceSyncRoot) {
             final TState originalState = mState;
 
             for (Reducer<TState> r : mReducers) {
-                // 对比类型，如果匹配才调用
-
                 mState = r.reduce(mState, action);
-                //noinspection ConstantConditions
                 if (mState == null) {
                     mState = originalState;
                 }
             }
             // fire state changed event only if the state was really changed
             shouldFireStateChangedEvent = originalState != mState;
-            // 在同步区域内，保证mState不会被其他线程意外的改变
+            // ensure that mState can not be changed by other thread
             newState = mState;
         }
         if (shouldFireStateChangedEvent) {
-            mActionRelay.accept(new StateChangedEventArgs<>(action, newState));
+            mStateChangedRelay.accept(new StateChangedEventArgs<>(action, newState));
         }
-        return action;
     }
 
-    private <TAction extends Action> boolean executeMiddleware(@NonNull final TAction action) {
+    private <TAction extends Action> void executeMiddleware(@NonNull final TAction action) {
         if (mMiddlewareList.size() > 0) {
             // 使用 middleware 处理副作用，Middleware需要自己处理异步
             synchronized (mMiddlewareSyncRoot) {
-                for (final Middleware<? extends Action> middleware : mMiddlewareList) {
-                    if (action.getClass().equals(middleware.getAcceptableActionClass())) {
-                        //noinspection unchecked
-                        ((Middleware<TAction>) middleware)
-                                .process(action)
-                                .subscribe(new Consumer<Action>() {
-                                               @Override
-                                               public void accept(@NonNull Action resultAction) throws Exception {
-                                                   dispatch(resultAction);
-                                               }
-                                           },
-                                        new Consumer<Throwable>() {
-                                            @Override
-                                            public void accept(@NonNull Throwable throwable) throws Exception {
-                                                onMiddlewareError(throwable);
-                                            }
-                                        });
-                        return true;
-                    }
-                }
+                Observable.fromIterable(mMiddlewareList)
+                        .flatMap(new Function<Middleware, ObservableSource<? extends Action>>() {
+                            @Override
+                            public ObservableSource<? extends Action> apply(@NonNull Middleware middleware) throws Exception {
+                                return middleware.process(action);
+                            }
+                        })
+                        .subscribe(new Consumer<Action>() {
+                                       @Override
+                                       public void accept(@NonNull Action resultAction) throws Exception {
+                                           dispatch(resultAction);
+                                       }
+                                   },
+                                new Consumer<Throwable>() {
+                                    @Override
+                                    public void accept(@NonNull Throwable throwable) throws Exception {
+                                        onMiddlewareError(throwable);
+                                    }
+                                });
             }
         }
-        return false;
     }
 
     protected void onMiddlewareError(@NonNull Throwable throwable) {
-
     }
 
     protected void onStateChangedListenerError(@NonNull Throwable throwable) {
-
     }
 
     @Override
     public Observable<StateChangedEventArgs<TState>> getObservable() {
-        return mActionRelay.toSerialized();
+        return mStateChangedObservable;
     }
 
     @Override
     public Disposable subscribe(@NonNull final StateChangedListener<TState> stateChangedListener) {
-        return mActionRelay.filter(new Predicate<StateChangedEventArgs<TState>>() {
+        return mStateChangedRelay.filter(new Predicate<StateChangedEventArgs<TState>>() {
             @Override
             public boolean test(@NonNull StateChangedEventArgs<TState> eventArgs) throws Exception {
                 return stateChangedListener.hasInterestFor(eventArgs.getAction());
@@ -140,13 +142,11 @@ public abstract class AbstractStore<TState extends State> implements Store<TStat
     @SafeVarargs
     public final void init(@NonNull final TState initState,
                            final Reducer<TState>... reducers) {
-        init(initState,
-                Collections.<Middleware<? extends Action>>emptyList(),
-                Arrays.asList(reducers));
+        init(initState, Collections.<Middleware>emptyList(), Arrays.asList(reducers));
     }
 
     public final void init(@NonNull final TState initState,
-                           final List<Middleware<? extends Action>> middlewareList,
+                           final List<Middleware> middlewareList,
                            final List<Reducer<TState>> reducers) {
         if (initState == null) {
             throw new NullPointerException("initState is null");

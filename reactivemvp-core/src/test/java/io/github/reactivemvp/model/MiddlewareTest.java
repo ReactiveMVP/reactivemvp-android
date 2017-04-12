@@ -5,14 +5,21 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-import io.github.reactivemvp.model.action.UpdateCounterAction;
+import java.util.Collections;
+
+import io.github.reactivemvp.model.action.IncreaseCounterAction;
+import io.github.reactivemvp.model.middleware.IncreaseCounterMiddleware;
 import io.github.reactivemvp.model.reducer.UpdateCounterReducer;
 import io.github.reactivemvp.model.store.CounterStore;
 import io.reactivex.annotations.NonNull;
 import io.reactivex.disposables.Disposable;
 import io.reactivex.functions.Consumer;
 
-public class StoreTest {
+/**
+ * Created by ruoshili on 4/12/2017.
+ */
+
+public class MiddlewareTest {
     private CounterStore mStore;
     private Throwable mError;
     private int mLocalCount;
@@ -21,9 +28,9 @@ public class StoreTest {
     @Before
     public void before() {
         mStore = new CounterStore();
-        mStore.init(
-                new CounterState.Builder().build(),
-                new UpdateCounterReducer());
+        mStore.init(new CounterState.Builder().build(),
+                Collections.<Middleware>singletonList(new IncreaseCounterMiddleware()),
+                Collections.<Reducer<CounterState>>singletonList(new UpdateCounterReducer()));
 
         mDisposable = mStore.getObservable()
                 .subscribe(new Consumer<StateChangedEventArgs<CounterState>>() {
@@ -44,15 +51,8 @@ public class StoreTest {
     @Test
     public void testInc() {
         final int originalCount = mStore.getState().getCount();
-        mStore.dispatch(new UpdateCounterAction(UpdateCounterAction.Operation.Increase));
+        mStore.dispatch(new IncreaseCounterAction());
         Assert.assertEquals(originalCount + 1, mStore.getState().getCount());
-    }
-
-    @Test
-    public void testDec() {
-        final int originalCount = mStore.getState().getCount();
-        mStore.dispatch(new UpdateCounterAction(UpdateCounterAction.Operation.Decrease));
-        Assert.assertEquals(originalCount - 1, mStore.getState().getCount());
     }
 
 

@@ -7,6 +7,6 @@ import io.github.reactivemvp.model.store.AbstractStore;
  * Created by ruoshili on 4/12/2017.
  */
 
-public final class CounterStore extends AbstractStore<CounterState> {
+public class CounterStore extends AbstractStore<CounterState> {
 
 }
