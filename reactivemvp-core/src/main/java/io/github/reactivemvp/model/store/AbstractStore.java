@@ -36,7 +36,7 @@ public abstract class AbstractStore<TState extends State> implements Store<TStat
         }
     };
     private TState mState;
-    private List<Reducer<TState, ? extends Action>> mReducers = Collections.emptyList();
+    private List<Reducer<TState>> mReducers = Collections.emptyList();
     private List<Middleware<? extends Action>> mMiddlewareList = Collections.emptyList();
 
     @Override
@@ -44,17 +44,10 @@ public abstract class AbstractStore<TState extends State> implements Store<TStat
         return mState;
     }
 
-    /**
-     * 分发动作。在这里寻找合适的reducer处理action
-     *
-     * @param action
-     * @param <TAction>
-     * @return 参数中的action是否被处理了，如果没有找到相应的reducer，则说明未被处理
-     */
     @Override
-    public <TAction extends Action> boolean dispatch(@NonNull final TAction action) {
+    public <TAction extends Action> TAction dispatch(@NonNull final TAction action) {
         if (executeMiddleware(action)) {
-            return true;
+            return action;
         }
 
         // 目前由于reducer做的事情比较简单，只是创建对象和修改对象状态，就在调用者线程执行了
@@ -63,20 +56,16 @@ public abstract class AbstractStore<TState extends State> implements Store<TStat
         synchronized (mReduceSyncRoot) {
             final TState originalState = mState;
 
-            // Reducer与Action类型必须1:1
-            for (Reducer<TState, ? extends Action> r : mReducers) {
+            for (Reducer<TState> r : mReducers) {
                 // 对比类型，如果匹配才调用
-                if (action.getClass().equals(r.getAcceptableActionClass())) {
-                    //noinspection unchecked
-                    mState = ((Reducer<TState, TAction>) r).reduce(mState, action);
-                    //noinspection ConstantConditions
-                    if (mState == null) {
-                        mState = originalState;
-                    }
-                    break;
+
+                mState = r.reduce(mState, action);
+                //noinspection ConstantConditions
+                if (mState == null) {
+                    mState = originalState;
                 }
             }
-            // 只有状态发生了改变才发出通知
+            // fire state changed event only if the state was really changed
             shouldFireStateChangedEvent = originalState != mState;
             // 在同步区域内，保证mState不会被其他线程意外的改变
             newState = mState;
@@ -84,7 +73,7 @@ public abstract class AbstractStore<TState extends State> implements Store<TStat
         if (shouldFireStateChangedEvent) {
             mActionRelay.accept(new StateChangedEventArgs<>(action, newState));
         }
-        return shouldFireStateChangedEvent;
+        return action;
     }
 
     private <TAction extends Action> boolean executeMiddleware(@NonNull final TAction action) {
@@ -131,20 +120,12 @@ public abstract class AbstractStore<TState extends State> implements Store<TStat
 
     @Override
     public Disposable subscribe(@NonNull final StateChangedListener<TState> stateChangedListener) {
-        Observable<StateChangedEventArgs<TState>> observable = mActionRelay;
-
-
-        final List<Class<? extends Action>> interestedActionTypes = stateChangedListener.getInterestedActionTypes();
-
-        if (interestedActionTypes != null && interestedActionTypes.size() > 0) {
-            observable = observable.filter(new Predicate<StateChangedEventArgs<TState>>() {
-                @Override
-                public boolean test(@NonNull StateChangedEventArgs<TState> eventArgs) throws Exception {
-                    return interestedActionTypes.contains(eventArgs.getAction().getClass());
-                }
-            });
-        }
-        return observable.subscribe(new Consumer<StateChangedEventArgs<TState>>() {
+        return mActionRelay.filter(new Predicate<StateChangedEventArgs<TState>>() {
+            @Override
+            public boolean test(@NonNull StateChangedEventArgs<TState> eventArgs) throws Exception {
+                return stateChangedListener.hasInterestFor(eventArgs.getAction());
+            }
+        }).subscribe(new Consumer<StateChangedEventArgs<TState>>() {
             @Override
             public void accept(@NonNull StateChangedEventArgs<TState> eventArgs) throws Exception {
                 try {
@@ -158,7 +139,7 @@ public abstract class AbstractStore<TState extends State> implements Store<TStat
 
     @SafeVarargs
     public final void init(@NonNull final TState initState,
-                           final Reducer<TState, ? extends Action>... reducers) {
+                           final Reducer<TState>... reducers) {
         init(initState,
                 Collections.<Middleware<? extends Action>>emptyList(),
                 Arrays.asList(reducers));
@@ -166,7 +147,7 @@ public abstract class AbstractStore<TState extends State> implements Store<TStat
 
     public final void init(@NonNull final TState initState,
                            final List<Middleware<? extends Action>> middlewareList,
-                           final List<Reducer<TState, ? extends Action>> reducers) {
+                           final List<Reducer<TState>> reducers) {
         if (initState == null) {
             throw new NullPointerException("initState is null");
         }

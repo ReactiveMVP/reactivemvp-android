@@ -13,12 +13,12 @@ public interface Store<TState extends State> {
     TState getState();
 
     /**
-     * 将action分发给 相应的reducer去处理
+     * Dispatches an action. This is the only way to trigger a state change.
      *
-     * @param action
-     * @return true: 改变了状态； false: 没有改变状态
+     * @param action  A plain object describing the change that makes sense for your application.
+     * @return The dispatched action
      */
-    <TAction extends Action> boolean dispatch(@NonNull TAction action);
+    <TAction extends Action> TAction dispatch(@NonNull TAction action);
 
     /**
      * 订阅状态变化

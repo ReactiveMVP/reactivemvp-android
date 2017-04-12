@@ -14,7 +14,7 @@ public abstract class State {
         }
     }
 
-    public abstract static class Builder<T extends State> {
+    protected abstract static class Builder<T extends State> {
         public Builder() {
         }
 
