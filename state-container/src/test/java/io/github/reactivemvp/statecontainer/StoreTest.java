@@ -42,6 +42,14 @@ public class StoreTest {
     }
 
     @Test
+    public void testNullAction() {
+        final int originalCount = mStore.getState().getCount();
+        mStore.dispatch(null);
+        Assert.assertEquals(originalCount, mStore.getState().getCount());
+    }
+
+
+    @Test
     public void testInc() {
         final int originalCount = mStore.getState().getCount();
         mStore.dispatch(new UpdateCounterAction(UpdateCounterAction.Operation.Increase));
