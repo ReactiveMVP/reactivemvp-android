@@ -1,1 +1,1 @@
-include ':mvp', ':sample', ':state-container'
+include ':mvp', ':sample'

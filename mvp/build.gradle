@@ -14,7 +14,7 @@ android {
 
 dependencies {
     compile fileTree(dir: 'libs', include: ['*.jar'])
-    compile project(':state-container')
+    compile 'io.github.reactivemvp:reduxj:0.0.1'
 
     testCompile 'junit:junit:4.12'
 }
